@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /*
-  media-conv CLI (Bun + ffmpeg)
+  tv-media-conv CLI (Bun + ffmpeg)
 
   Commands:
     - benchmark: Detect capabilities and choose optimal CPU/QSV concurrency
@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: BenchmarkConfig = {
   fallbackBitrate: "3000k",
 };
 
-const DEFAULT_CONFIG_PATH = resolvePath("media-conv.config.json");
+const DEFAULT_CONFIG_PATH = resolvePath("tv-media-conv.config.json");
 
 function resolvePath(p: string): string {
   return path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
@@ -744,7 +744,7 @@ async function runBenchmark(
 }
 
 function printHelp(): void {
-  console.log(`media-conv (Bun + ffmpeg)
+  console.log(`tv-media-conv (Bun + ffmpeg)
 
 Usage:
   bun run index.ts benchmark --input <file-or-dir> [--config <path>]

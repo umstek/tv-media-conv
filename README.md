@@ -1,4 +1,4 @@
-# media-conv
+# tv-media-conv
 
 Bun + ffmpeg batch converter for TV-friendly MP4 (H.264 + AAC) with simple zero-padded filenames.
 
@@ -17,7 +17,7 @@ bun install
 
 ### 1) Benchmark the machine
 
-Detects Intel QSV and measures CPU scaling, then writes `media-conv.config.json`.
+Detects Intel QSV and measures CPU scaling, then writes `tv-media-conv.config.json`.
 
 ```bash
 bun run index.ts benchmark --input <file-or-dir>

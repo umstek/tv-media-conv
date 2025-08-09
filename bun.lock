@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "media-conv",
+      "name": "tv-media-conv",
       "devDependencies": {
         "@types/bun": "latest",
       },
