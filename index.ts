@@ -397,7 +397,15 @@ interface EpisodeCandidate {
 }
 
 function extractEpisodeNumberFromName(name: string): number | null {
-  const lower = name.toLowerCase();
+  // Remove file extension first
+  const nameWithoutExt = name.replace(/\.[^.]+$/, '');
+  
+  // Remove only YouTube IDs added by yt-dlp (11-character alphanumeric strings in brackets)
+  // This handles patterns like: [-ayFQnecY-4], [dQw4w9WgXcQ], etc.
+  // But preserves other bracketed content like [1080p], [h264], [Season 1], etc.
+  const cleaned = nameWithoutExt.replace(/\[([a-zA-Z0-9_-]{11})\]/g, '').trim();
+  
+  const lower = cleaned.toLowerCase();
   // 1) SxxEyy pattern
   const se = lower.match(
     /s(\d{1,2})\s*[^a-z0-9]?\s*e(\d{1,3})/i
