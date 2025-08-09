@@ -56,7 +56,9 @@ const DEFAULT_CONFIG: BenchmarkConfig = {
   fallbackBitrate: "3000k",
 };
 
-const DEFAULT_CONFIG_PATH = resolvePath("tv-media-conv.config.json");
+function getDefaultConfigPath(): string {
+  return resolvePath("tv-media-conv.config.json");
+}
 
 function resolvePath(p: string): string {
   return path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
@@ -351,7 +353,12 @@ async function writeConfig(
 
 async function readConfig(pathStr: string): Promise<BenchmarkConfig | null> {
   try {
-    const text = await Bun.file(pathStr).text();
+    const file = Bun.file(pathStr);
+    const exists = await file.exists();
+    if (!exists) {
+      return null;
+    }
+    const text = await file.text();
     const parsed = JSON.parse(text) as BenchmarkConfig;
     return parsed;
   } catch {
@@ -429,8 +436,14 @@ function extractEpisodeNumberFromName(name: string): number | null {
 
 async function listFilesRecursive(dir: string): Promise<string[]> {
   const out: string[] = [];
-  for await (const entry of new Bun.Glob("**/*").scan({ cwd: dir })) {
-    out.push(path.resolve(dir, entry));
+  try {
+    // Check if directory exists first
+    await fs.access(dir);
+    for await (const entry of new Bun.Glob("**/*").scan({ cwd: dir })) {
+      out.push(path.resolve(dir, entry));
+    }
+  } catch (error) {
+    throw new Error(`Cannot access directory "${dir}": ${error instanceof Error ? error.message : String(error)}`);
   }
   return out;
 }
@@ -738,7 +751,7 @@ async function runBenchmark(
     config.useQsv = false;
   }
 
-  const outPath = configPath ? resolvePath(configPath) : DEFAULT_CONFIG_PATH;
+  const outPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
   await writeConfig(outPath, config);
   console.log(`Saved configuration to ${outPath}`);
 }
@@ -785,57 +798,66 @@ async function main() {
     return;
   }
   if (cmd === "convert") {
-    let inputDir: string | undefined;
-    let outputDir: string | undefined;
-    let force = false;
-    let dryRun = false;
-    let configPath: string | undefined;
-    for (let i = 1; i < argv.length; i++) {
-      const a = argv[i];
-      if (a === "--in" && i + 1 < argv.length) {
-        inputDir = argv[++i];
-        continue;
-      }
-      if (a === "--out" && i + 1 < argv.length) {
-        outputDir = argv[++i];
-        continue;
-      }
-      if (a === "--force") {
-        force = true;
-        continue;
-      }
-      if (a === "--dry-run") {
-        dryRun = true;
-        continue;
-      }
-      if (a === "--config" && i + 1 < argv.length) {
-        configPath = argv[++i];
-        continue;
-      }
-    }
-    if (!inputDir || !outputDir) {
-      console.error("--in and --out are required");
-      process.exit(2);
-    }
-    const cfgPath = configPath ? resolvePath(configPath) : DEFAULT_CONFIG_PATH;
-    const cfg = (await readConfig(cfgPath)) ?? DEFAULT_CONFIG;
     try {
-      await fs.access(cfgPath);
-    } catch {
-      console.log(
-        `No config at ${cfgPath}; using defaults. You can run 'bun run index.ts benchmark --input <dir>' to generate one.`
+      let inputDir: string | undefined;
+      let outputDir: string | undefined;
+      let force = false;
+      let dryRun = false;
+      let configPath: string | undefined;
+      for (let i = 1; i < argv.length; i++) {
+        const a = argv[i];
+        if (a === "--in" && i + 1 < argv.length) {
+          inputDir = argv[++i];
+          continue;
+        }
+        if (a === "--out" && i + 1 < argv.length) {
+          outputDir = argv[++i];
+          continue;
+        }
+        if (a === "--force") {
+          force = true;
+          continue;
+        }
+        if (a === "--dry-run") {
+          dryRun = true;
+          continue;
+        }
+        if (a === "--config" && i + 1 < argv.length) {
+          configPath = argv[++i];
+          continue;
+        }
+      }
+      if (!inputDir || !outputDir) {
+        console.error("--in and --out are required");
+        process.exit(2);
+      }
+      const cfgPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
+      let cfg = await readConfig(cfgPath);
+      
+      if (!cfg) {
+        console.log(
+          `No config found at ${cfgPath}. Running benchmark first to generate optimal configuration...`
+        );
+        // Run benchmark using the input directory to generate config
+        await runBenchmark(inputDir, configPath);
+        // Now read the generated config
+        cfg = (await readConfig(cfgPath)) ?? DEFAULT_CONFIG;
+        console.log(`Benchmark complete. Starting conversion with optimized settings.`);
+      }
+      await runConvert(
+        {
+          inputDir: resolvePath(inputDir),
+          outputDir: resolvePath(outputDir),
+          force,
+          dryRun,
+          configPath,
+        },
+        cfg
       );
+    } catch (error) {
+      console.error(`Convert command failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
     }
-    await runConvert(
-      {
-        inputDir: resolvePath(inputDir),
-        outputDir: resolvePath(outputDir),
-        force,
-        dryRun,
-        configPath,
-      },
-      cfg
-    );
     return;
   }
   printHelp();
