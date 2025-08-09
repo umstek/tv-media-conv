@@ -398,7 +398,7 @@ function extractEpisodeNumberFromName(name: string): number | null {
   if (se && se[2]) return parseInt(se[2], 10);
   // 2) Eyy pattern
   const eonly = lower.match(
-    /\be(?:p|pisode)?\s*(\d{1,3})\b/
+    /e(?:p|pisode)?[\s_-]*(\d{1,3})/
   ) as RegExpMatchArray | null;
   if (eonly && eonly[1]) return parseInt(eonly[1], 10);
   // 3) Leading numbers
@@ -512,7 +512,7 @@ async function convertOne(
   if (code !== 0) {
     try {
       await fs.unlink(outputPath);
-    } catch {}
+    } catch { }
     throw new Error(`ffmpeg failed for ${inputPath}`);
   }
 }
@@ -573,7 +573,7 @@ async function runConvert(
           if (Bun.file(outPath)) {
             // Bun.file(outPath).exists() is async; avoid await inside crit section
           }
-        } catch {}
+        } catch { }
       }
       return { ep, outPath, outName };
     }
@@ -599,7 +599,7 @@ async function runConvert(
             console.log(`Skipping existing ${job.outName}`);
             continue;
           }
-        } catch {}
+        } catch { }
       }
       return job;
     }
@@ -621,8 +621,7 @@ async function runConvert(
             await convertOne(ffmpeg, "qsv", job.ep.inputPath, job.outPath, cfg);
           } catch (e) {
             console.warn(
-              `QSV failed, retry on CPU: ${job.ep.baseName} -> ${
-                job.outName
+              `QSV failed, retry on CPU: ${job.ep.baseName} -> ${job.outName
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
@@ -692,10 +691,9 @@ async function runBenchmark(
   config.hasQsv = hasQsv;
 
   console.log(
-    `Benchmarking CPU (${config.cpuVideoEncoder} ${
-      config.cpuVideoEncoder === "libx264"
-        ? `preset ${config.cpuPreset}, CRF ${config.cpuCrf}`
-        : `bitrate ${config.fallbackBitrate}`
+    `Benchmarking CPU (${config.cpuVideoEncoder} ${config.cpuVideoEncoder === "libx264"
+      ? `preset ${config.cpuPreset}, CRF ${config.cpuCrf}`
+      : `bitrate ${config.fallbackBitrate}`
     })...`
   );
   // First, a single-stream speed estimate
