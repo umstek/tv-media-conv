@@ -17,19 +17,38 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 
-type EncoderChoice = "cpu" | "qsv";
+type EncoderChoice = "cpu" | "qsv" | "nvenc" | "amf";
 
 interface BenchmarkConfig {
+  // Hardware acceleration availability
   hasQsv: boolean;
+  hasNvenc: boolean;
+  hasAmf: boolean;
+
+  // Concurrency settings
   chosenCpuConcurrency: number; // how many CPU encodes in parallel
   chosenQsvConcurrency: number; // 0 or 1
+  chosenNvencConcurrency: number; // 0 or 1
+  chosenAmfConcurrency: number; // 0 or 1
+
+  // CPU encoding settings
   cpuPreset: string; // libx264 preset
   cpuCrf: number; // libx264 CRF
-  aacBitrate: string; // e.g. "160k"
-  useQsv: boolean; // whether to schedule QSV encodes
-  qsvGlobalQuality: number; // h264_qsv global_quality (roughly like CRF)
   cpuVideoEncoder: string; // selected CPU encoder (libx264, h264_mf, libopenh264)
   fallbackBitrate: string; // used if encoder doesn't support CRF (e.g. h264_mf, libopenh264)
+
+  // Audio settings
+  aacBitrate: string; // e.g. "160k"
+
+  // Hardware acceleration usage flags
+  useQsv: boolean; // whether to schedule QSV encodes
+  useNvenc: boolean; // whether to schedule NVENC encodes
+  useAmf: boolean; // whether to schedule AMF encodes
+
+  // Hardware-specific quality settings
+  qsvGlobalQuality: number; // h264_qsv global_quality (roughly like CRF)
+  nvencCq: number; // h264_nvenc constant quality
+  amfQpI: number; // h264_amf quantization parameter for I frames
 }
 
 interface ConvertOptions {
@@ -41,19 +60,38 @@ interface ConvertOptions {
 }
 
 const DEFAULT_CONFIG: BenchmarkConfig = {
+  // Hardware acceleration availability
   hasQsv: false,
+  hasNvenc: false,
+  hasAmf: false,
+
+  // Concurrency settings
   chosenCpuConcurrency: Math.max(
     1,
     Math.min(4, Math.floor((os.cpus()?.length ?? 4) / 3))
   ),
   chosenQsvConcurrency: 0,
+  chosenNvencConcurrency: 0,
+  chosenAmfConcurrency: 0,
+
+  // CPU encoding settings
   cpuPreset: "veryfast",
   cpuCrf: 20,
-  aacBitrate: "160k",
-  useQsv: false,
-  qsvGlobalQuality: 23,
   cpuVideoEncoder: "libx264",
   fallbackBitrate: "3000k",
+
+  // Audio settings
+  aacBitrate: "160k",
+
+  // Hardware acceleration usage flags
+  useQsv: false,
+  useNvenc: false,
+  useAmf: false,
+
+  // Hardware-specific quality settings
+  qsvGlobalQuality: 23,
+  nvencCq: 20,
+  amfQpI: 20,
 };
 
 function getDefaultConfigPath(): string {
@@ -164,6 +202,84 @@ async function supportsQsv(ffmpegCmd: string): Promise<boolean> {
     ]);
     const text = `${out ?? ""}\n${err ?? ""}`.toLowerCase();
     return text.includes("h264_qsv");
+  } catch {
+    return false;
+  }
+}
+
+async function supportsNvenc(ffmpegCmd: string): Promise<boolean> {
+  // Prefer direct encoder help query; ffmpeg returns error if encoder doesn't exist
+  try {
+    const helpProc = Bun.spawn({
+      cmd: [ffmpegCmd, "-hide_banner", "-v", "error", "-h", "encoder=h264_nvenc"],
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [code, err] = await Promise.all([
+      helpProc.exited,
+      helpProc.stderr?.text(),
+    ]);
+    if (code === 0) return true;
+    const text = (err ?? "").toLowerCase();
+    if (text.includes("unknown encoder") || text.includes("not found"))
+      return false;
+  } catch {
+    // ignore and try fallback
+  }
+  // Fallback: scan encoders list
+  try {
+    const proc = Bun.spawn({
+      cmd: [ffmpegCmd, "-hide_banner", "-encoders"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [_, out, err] = await Promise.all([
+      proc.exited,
+      proc.stdout?.text(),
+      proc.stderr?.text(),
+    ]);
+    const text = `${out ?? ""}
+${err ?? ""}`.toLowerCase();
+    return text.includes("h264_nvenc");
+  } catch {
+    return false;
+  }
+}
+
+async function supportsAmf(ffmpegCmd: string): Promise<boolean> {
+  // Prefer direct encoder help query; ffmpeg returns error if encoder doesn't exist
+  try {
+    const helpProc = Bun.spawn({
+      cmd: [ffmpegCmd, "-hide_banner", "-v", "error", "-h", "encoder=h264_amf"],
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [code, err] = await Promise.all([
+      helpProc.exited,
+      helpProc.stderr?.text(),
+    ]);
+    if (code === 0) return true;
+    const text = (err ?? "").toLowerCase();
+    if (text.includes("unknown encoder") || text.includes("not found"))
+      return false;
+  } catch {
+    // ignore and try fallback
+  }
+  // Fallback: scan encoders list
+  try {
+    const proc = Bun.spawn({
+      cmd: [ffmpegCmd, "-hide_banner", "-encoders"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [_, out, err] = await Promise.all([
+      proc.exited,
+      proc.stdout?.text(),
+      proc.stderr?.text(),
+    ]);
+    const text = `${out ?? ""}
+${err ?? ""}`.toLowerCase();
+    return text.includes("h264_amf");
   } catch {
     return false;
   }
@@ -287,6 +403,76 @@ async function benchmarkQsv(
   return parseSpeedFromFfmpegLog(res.stderr) ?? 1.0;
 }
 
+async function benchmarkNvenc(
+  ffmpegCmd: string,
+  sampleInput: string,
+  durationSec: number,
+  cq: number
+): Promise<number> {
+  const args = [
+    "-hide_banner",
+    "-y",
+    "-hwaccel",
+    "cuda",
+    "-hwaccel_output_format",
+    "cuda",
+    "-i",
+    sampleInput,
+    "-t",
+    String(durationSec),
+    "-map",
+    "0:v:0",
+    "-vf",
+    "scale_cuda=format=yuv420p",
+    "-c:v",
+    "h264_nvenc",
+    "-preset",
+    "medium",
+    "-cq",
+    String(cq),
+    "-f",
+    "null",
+    "-",
+  ];
+  const res = await runFfmpegToNull(ffmpegCmd, args);
+  return parseSpeedFromFfmpegLog(res.stderr) ?? 1.0;
+}
+
+async function benchmarkAmf(
+  ffmpegCmd: string,
+  sampleInput: string,
+  durationSec: number,
+  qpI: number
+): Promise<number> {
+  const args = [
+    "-hide_banner",
+    "-y",
+    "-i",
+    sampleInput,
+    "-t",
+    String(durationSec),
+    "-map",
+    "0:v:0",
+    "-c:v",
+    "h264_amf",
+    "-quality",
+    "balanced",
+    "-rc",
+    "cqp",
+    "-qp_i",
+    String(qpI),
+    "-qp_p",
+    String(qpI + 2),
+    "-qp_b",
+    String(qpI + 4),
+    "-f",
+    "null",
+    "-",
+  ];
+  const res = await runFfmpegToNull(ffmpegCmd, args);
+  return parseSpeedFromFfmpegLog(res.stderr) ?? 1.0;
+}
+
 async function determineCpuConcurrencyViaScaling(
   ffmpegCmd: string,
   sampleInput: string,
@@ -399,12 +585,12 @@ interface EpisodeCandidate {
 function extractEpisodeNumberFromName(name: string): number | null {
   // Remove file extension first
   const nameWithoutExt = name.replace(/\.[^.]+$/, '');
-  
+
   // Remove only YouTube IDs added by yt-dlp (11-character alphanumeric strings in brackets)
   // This handles patterns like: [-ayFQnecY-4], [dQw4w9WgXcQ], etc.
   // But preserves other bracketed content like [1080p], [h264], [Season 1], etc.
   const cleaned = nameWithoutExt.replace(/\[([a-zA-Z0-9_-]{11})\]/g, '').trim();
-  
+
   const lower = cleaned.toLowerCase();
   // 1) SxxEyy pattern
   const se = lower.match(
@@ -485,14 +671,20 @@ async function convertOne(
   cfg: BenchmarkConfig
 ): Promise<void> {
   const args: string[] = ["-hide_banner", "-y"];
+
+  // Hardware acceleration input options must come before -i
   if (encoder === "qsv") {
-    // Input options must come before -i
     args.push("-hwaccel", "qsv", "-hwaccel_output_format", "qsv");
+  } else if (encoder === "nvenc") {
+    args.push("-hwaccel", "cuda", "-hwaccel_output_format", "cuda");
   }
+  // AMF doesn't need explicit hwaccel flags
+
   args.push("-i", inputPath);
   // Mapping and common options
   args.push("-map", "0:v:0", "-map", "0:a:0?", "-movflags", "+faststart");
 
+  // Video encoding options based on encoder type
   if (encoder === "qsv") {
     // Ensure HW-friendly format conversion for 10-bit sources (HEVC 10-bit -> NV12)
     args.push(
@@ -507,13 +699,42 @@ async function convertOne(
       "-look_ahead",
       "1"
     );
+  } else if (encoder === "nvenc") {
+    args.push(
+      "-vf",
+      "scale_cuda=format=yuv420p",
+      "-c:v",
+      "h264_nvenc",
+      "-preset",
+      "medium",
+      "-cq",
+      String(cfg.nvencCq)
+    );
+  } else if (encoder === "amf") {
+    args.push(
+      "-c:v",
+      "h264_amf",
+      "-quality",
+      "balanced",
+      "-rc",
+      "cqp",
+      "-qp_i",
+      String(cfg.amfQpI),
+      "-qp_p",
+      String(cfg.amfQpI + 2),
+      "-qp_b",
+      String(cfg.amfQpI + 4),
+      "-pix_fmt",
+      "yuv420p"
+    );
   } else {
-    const cpuEnc = (cfg as any).cpuVideoEncoder || "libx264";
+    // CPU encoding
+    const cpuEnc = cfg.cpuVideoEncoder || "libx264";
     args.push("-c:v", cpuEnc);
     if (cpuEnc === "libx264") {
       args.push("-preset", cfg.cpuPreset, "-crf", String(cfg.cpuCrf));
     } else {
-      args.push("-b:v", (cfg as any).fallbackBitrate || "3000k");
+      args.push("-b:v", cfg.fallbackBitrate || "3000k");
     }
     args.push("-pix_fmt", "yuv420p");
   }
@@ -653,6 +874,56 @@ async function runConvert(
     );
   }
 
+  // NVENC workers
+  const nvencWorkers =
+    cfg.useNvenc && cfg.hasNvenc ? Math.max(0, cfg.chosenNvencConcurrency) : 0;
+  for (let i = 0; i < nvencWorkers; i++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const job = await nextJob();
+          if (!job) break;
+          try {
+            console.log(`NVENC: ${job.ep.baseName} -> ${job.outName}`);
+            await convertOne(ffmpeg, "nvenc", job.ep.inputPath, job.outPath, cfg);
+          } catch (e) {
+            console.warn(
+              `NVENC failed, retry on CPU: ${job.ep.baseName} -> ${job.outName
+              }: ${String(e)}`
+            );
+            // Fall back to CPU for this job
+            await convertOne(ffmpeg, "cpu", job.ep.inputPath, job.outPath, cfg);
+          }
+        }
+      })()
+    );
+  }
+
+  // AMF workers
+  const amfWorkers =
+    cfg.useAmf && cfg.hasAmf ? Math.max(0, cfg.chosenAmfConcurrency) : 0;
+  for (let i = 0; i < amfWorkers; i++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const job = await nextJob();
+          if (!job) break;
+          try {
+            console.log(`AMF: ${job.ep.baseName} -> ${job.outName}`);
+            await convertOne(ffmpeg, "amf", job.ep.inputPath, job.outPath, cfg);
+          } catch (e) {
+            console.warn(
+              `AMF failed, retry on CPU: ${job.ep.baseName} -> ${job.outName
+              }: ${String(e)}`
+            );
+            // Fall back to CPU for this job
+            await convertOne(ffmpeg, "cpu", job.ep.inputPath, job.outPath, cfg);
+          }
+        }
+      })()
+    );
+  }
+
   // CPU workers
   const cpuWorkers = Math.max(1, cfg.chosenCpuConcurrency);
   for (let i = 0; i < cpuWorkers; i++) {
@@ -708,8 +979,14 @@ async function runBenchmark(
     }
   }
 
+  // Detect available hardware acceleration
   const hasQsv = await supportsQsv(ffmpeg);
+  const hasNvenc = await supportsNvenc(ffmpeg);
+  const hasAmf = await supportsAmf(ffmpeg);
+
   config.hasQsv = hasQsv;
+  config.hasNvenc = hasNvenc;
+  config.hasAmf = hasAmf;
 
   console.log(
     `Benchmarking CPU (${config.cpuVideoEncoder} ${config.cpuVideoEncoder === "libx264"
@@ -742,21 +1019,88 @@ async function runBenchmark(
   config.chosenCpuConcurrency = Math.max(1, bestC);
   console.log(`  Chosen CPU concurrency: ${config.chosenCpuConcurrency}`);
 
+  // Benchmark QSV if available
   if (hasQsv) {
     console.log("Benchmarking QSV (h264_qsv)...");
-    const qsvSpeed = await benchmarkQsv(
-      ffmpeg,
-      sampleInput,
-      20,
-      config.qsvGlobalQuality
-    );
-    console.log(`  QSV speed ~ ${qsvSpeed.toFixed(2)}x`);
-    config.chosenQsvConcurrency = 1;
-    config.useQsv = true;
+    try {
+      const qsvSpeed = await benchmarkQsv(
+        ffmpeg,
+        sampleInput,
+        20,
+        config.qsvGlobalQuality
+      );
+      console.log(`  QSV speed ~ ${qsvSpeed.toFixed(2)}x`);
+      config.chosenQsvConcurrency = 1;
+      config.useQsv = true;
+    } catch (e) {
+      console.warn(`QSV benchmark failed: ${String(e)}`);
+      config.chosenQsvConcurrency = 0;
+      config.useQsv = false;
+    }
   } else {
-    console.log("QSV not detected; CPU-only configuration will be used.");
+    console.log("QSV not detected.");
     config.chosenQsvConcurrency = 0;
     config.useQsv = false;
+  }
+
+  // Benchmark NVENC if available
+  if (hasNvenc) {
+    console.log("Benchmarking NVENC (h264_nvenc)...");
+    try {
+      const nvencSpeed = await benchmarkNvenc(
+        ffmpeg,
+        sampleInput,
+        20,
+        config.nvencCq
+      );
+      console.log(`  NVENC speed ~ ${nvencSpeed.toFixed(2)}x`);
+      config.chosenNvencConcurrency = 1;
+      config.useNvenc = true;
+    } catch (e) {
+      console.warn(`NVENC benchmark failed: ${String(e)}`);
+      config.chosenNvencConcurrency = 0;
+      config.useNvenc = false;
+    }
+  } else {
+    console.log("NVENC not detected.");
+    config.chosenNvencConcurrency = 0;
+    config.useNvenc = false;
+  }
+
+  // Benchmark AMF if available
+  if (hasAmf) {
+    console.log("Benchmarking AMF (h264_amf)...");
+    try {
+      const amfSpeed = await benchmarkAmf(
+        ffmpeg,
+        sampleInput,
+        20,
+        config.amfQpI
+      );
+      console.log(`  AMF speed ~ ${amfSpeed.toFixed(2)}x`);
+      config.chosenAmfConcurrency = 1;
+      config.useAmf = true;
+    } catch (e) {
+      console.warn(`AMF benchmark failed: ${String(e)}`);
+      config.chosenAmfConcurrency = 0;
+      config.useAmf = false;
+    }
+  } else {
+    console.log("AMF not detected.");
+    config.chosenAmfConcurrency = 0;
+    config.useAmf = false;
+  }
+
+  // Summary
+  const hwTypes: string[] = [];
+  if (config.useQsv) hwTypes.push("QSV");
+  if (config.useNvenc) hwTypes.push("NVENC");
+  if (config.useAmf) hwTypes.push("AMF");
+
+  if (hwTypes.length > 0) {
+    console.log(`Hardware acceleration enabled: ${hwTypes.join(", ")}`);
+  } else {
+    console.log("No hardware acceleration available; CPU-only configuration will be used.");
   }
 
   const outPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
@@ -773,7 +1117,12 @@ Usage:
 
 Notes:
   - Output files are named NNN.mp4 (zero-padded) to sort correctly on TVs
-  - Benchmarks choose CPU concurrency and enable QSV if available
+  - Benchmarks choose CPU concurrency and enable hardware acceleration if available
+  - Hardware acceleration support:
+    • Intel QSV (Quick Sync Video) - h264_qsv encoder
+    • NVIDIA NVENC - h264_nvenc encoder
+    • AMD AMF - h264_amf encoder
+  - Falls back to CPU encoding if hardware acceleration fails
 `);
 }
 
@@ -841,7 +1190,7 @@ async function main() {
       }
       const cfgPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
       let cfg = await readConfig(cfgPath);
-      
+
       if (!cfg) {
         console.log(
           `No config found at ${cfgPath}. Running benchmark first to generate optimal configuration...`

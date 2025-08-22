@@ -17,7 +17,7 @@ bun install
 
 ### 1) Benchmark the machine
 
-Detects Intel QSV and measures CPU scaling, then writes `tv-media-conv.config.json`.
+Detects hardware acceleration (Intel QSV, NVIDIA NVENC, AMD AMF) and measures CPU scaling, then writes `tv-media-conv.config.json`.
 
 ```bash
 bun run index.ts benchmark --input <file-or-dir>
@@ -43,7 +43,18 @@ Options:
 - `--dry-run`: print planned actions without converting
 - `--config <path>`: use a specific config file
 
+## Hardware Acceleration
+
+The tool automatically detects and benchmarks available hardware acceleration:
+
+- **Intel QSV** (Quick Sync Video): Uses `h264_qsv` encoder on Intel CPUs with integrated graphics
+- **NVIDIA NVENC**: Uses `h264_nvenc` encoder on NVIDIA GPUs
+- **AMD AMF** (Advanced Media Framework): Uses `h264_amf` encoder on AMD GPUs
+
+Each hardware acceleration type runs one worker alongside CPU workers for maximum throughput. If hardware encoding fails for any file, it automatically falls back to CPU encoding.
+
 Notes:
 
-- If Intel QSV is available, one QSV job runs alongside CPU jobs for maximum throughput.
+- Hardware acceleration significantly improves encoding speed (3-10x faster than CPU-only)
+- Multiple hardware acceleration types can be active simultaneously if available
 - Episode numbers are extracted heuristically from filenames (e.g. `S01E03`, `Ep 3`, `03 - title`, etc.).
