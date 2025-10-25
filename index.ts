@@ -296,6 +296,11 @@ function parseSpeedFromFfmpegLog(stderrText: string): number | null {
   return num ? parseFloat(num) : null;
 }
 
+function summarizeFfmpegError(stderr: string): string {
+  const lines = stderr.trim().split(/\r?\n/).filter(Boolean);
+  return lines.length > 0 ? lines[lines.length - 1]! : "unknown error";
+}
+
 async function runFfmpegToNull(
   ffmpegCmd: string,
   args: string[]
@@ -339,6 +344,9 @@ async function benchmarkCpu(
     "-",
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
+  if (res.code !== 0) {
+    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+  }
   const speed = parseSpeedFromFfmpegLog(res.stderr);
   if (speed != null) return speed;
   // Retry with default verbosity if not found
@@ -363,6 +371,9 @@ async function benchmarkCpu(
     "-",
   ];
   const res2 = await runFfmpegToNull(ffmpegCmd, args2);
+  if (res2.code !== 0) {
+    throw new Error(`ffmpeg exited with code ${res2.code}: ${summarizeFfmpegError(res2.stderr)}`);
+  }
   return parseSpeedFromFfmpegLog(res2.stderr) ?? 1.0;
 }
 
@@ -400,7 +411,14 @@ async function benchmarkQsv(
     "-",
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
-  return parseSpeedFromFfmpegLog(res.stderr) ?? 1.0;
+  if (res.code !== 0) {
+    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+  }
+  const speed = parseSpeedFromFfmpegLog(res.stderr);
+  if (speed == null) {
+    throw new Error("Failed to parse QSV benchmark speed");
+  }
+  return speed;
 }
 
 async function benchmarkNvenc(
@@ -435,7 +453,14 @@ async function benchmarkNvenc(
     "-",
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
-  return parseSpeedFromFfmpegLog(res.stderr) ?? 1.0;
+  if (res.code !== 0) {
+    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+  }
+  const speed = parseSpeedFromFfmpegLog(res.stderr);
+  if (speed == null) {
+    throw new Error("Failed to parse NVENC benchmark speed");
+  }
+  return speed;
 }
 
 async function benchmarkAmf(
@@ -470,7 +495,14 @@ async function benchmarkAmf(
     "-",
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
-  return parseSpeedFromFfmpegLog(res.stderr) ?? 1.0;
+  if (res.code !== 0) {
+    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+  }
+  const speed = parseSpeedFromFfmpegLog(res.stderr);
+  if (speed == null) {
+    throw new Error("Failed to parse AMF benchmark speed");
+  }
+  return speed;
 }
 
 async function determineCpuConcurrencyViaScaling(
@@ -515,7 +547,12 @@ async function determineCpuConcurrencyViaScaling(
       );
     }
     const start = performance.now();
-    await Promise.all(procs);
+    const results = await Promise.all(procs);
+    for (const res of results) {
+      if (res.code !== 0) {
+        throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+      }
+    }
     const elapsedSec = (performance.now() - start) / 1000;
     const totalProcessed = c * durationSec;
     const throughput = totalProcessed / Math.max(0.001, elapsedSec);
@@ -580,6 +617,21 @@ interface EpisodeCandidate {
   inputPath: string;
   baseName: string;
   episode: number;
+  relativeDir: string;
+}
+
+interface FolderBatch {
+  relativeDir: string;
+  episodes: EpisodeCandidate[];
+  width: number;
+}
+
+interface ConversionJob {
+  candidate: EpisodeCandidate;
+  outputPath: string;
+  outputRelativePath: string;
+  inputRelativePath: string;
+  outputFileName: string;
 }
 
 function extractEpisodeNumberFromName(name: string): number | null {
@@ -642,20 +694,93 @@ async function listFilesRecursive(dir: string): Promise<string[]> {
   return out;
 }
 
-async function collectEpisodes(inputDir: string): Promise<EpisodeCandidate[]> {
-  const files = await listFilesRecursive(inputDir);
-  const candidates: EpisodeCandidate[] = [];
-  for (const f of files) {
-    if (!isVideoFile(f)) continue;
-    const base = path.basename(f);
-    const epi = extractEpisodeNumberFromName(base);
-    if (epi != null)
-      candidates.push({ inputPath: f, baseName: base, episode: epi });
+async function collectFolderBatches(inputDir: string): Promise<FolderBatch[]> {
+  try {
+    await fs.access(inputDir);
+  } catch (error) {
+    throw new Error(
+      `Cannot access directory "${inputDir}": ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
-  if (candidates.length === 0)
-    throw new Error("No episode-like video files found in input directory.");
-  candidates.sort((a, b) => a.episode - b.episode);
-  return candidates;
+
+  const batches: FolderBatch[] = [];
+
+  const walk = async (currentDir: string, relativeDir: string): Promise<void> => {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+
+    const episodes: EpisodeCandidate[] = [];
+
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isFile()) {
+        if (!isVideoFile(entry.name)) continue;
+        const episode = extractEpisodeNumberFromName(entry.name);
+        if (episode == null) continue;
+        episodes.push({
+          inputPath: entryPath,
+          baseName: entry.name,
+          episode,
+          relativeDir,
+        });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        const nextRelative = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+        await walk(entryPath, nextRelative);
+      }
+    }
+
+    if (episodes.length > 0) {
+      episodes.sort((a, b) => a.episode - b.episode);
+      const maxEpisode = episodes[episodes.length - 1]!.episode;
+      batches.push({
+        relativeDir,
+        episodes,
+        width: chooseWidth(maxEpisode),
+      });
+    }
+  };
+
+  await walk(inputDir, "");
+  return batches;
+}
+
+async function buildConversionJobs(
+  inputDir: string,
+  outputDir: string
+): Promise<ConversionJob[]> {
+  const batches = await collectFolderBatches(inputDir);
+  const jobs: ConversionJob[] = [];
+
+  for (const batch of batches) {
+    const targetDir = batch.relativeDir
+      ? path.join(outputDir, batch.relativeDir)
+      : outputDir;
+
+    for (const candidate of batch.episodes) {
+      const outputFileName = `${padNumber(candidate.episode, batch.width)}.mp4`;
+      const outputPath = path.join(targetDir, outputFileName);
+      const inputRelativePath = batch.relativeDir
+        ? path.join(batch.relativeDir, candidate.baseName)
+        : candidate.baseName;
+      const outputRelativePath = batch.relativeDir
+        ? path.join(batch.relativeDir, outputFileName)
+        : outputFileName;
+
+      jobs.push({
+        candidate,
+        outputPath,
+        outputRelativePath,
+        inputRelativePath,
+        outputFileName,
+      });
+    }
+  }
+
+  return jobs;
 }
 
 function chooseWidth(maxEpisode: number): number {
@@ -794,51 +919,45 @@ async function runConvert(
   cfg: BenchmarkConfig
 ): Promise<void> {
   const { ffmpeg } = await ensureFfmpegTools();
-  const episodes = await collectEpisodes(opts.inputDir);
-  const lastEpisode = episodes[episodes.length - 1];
-  const width = chooseWidth(lastEpisode ? lastEpisode.episode : 999);
   await fs.mkdir(opts.outputDir, { recursive: true });
+
+  const jobs = await buildConversionJobs(opts.inputDir, opts.outputDir);
+
+  if (jobs.length === 0) {
+    throw new Error("No episode-like video files found in input directory.");
+  }
+
+  if (!opts.dryRun) {
+    const dirs = new Set<string>();
+    for (const job of jobs) {
+      dirs.add(path.dirname(job.outputPath));
+    }
+    for (const dir of dirs) {
+      await fs.mkdir(dir, { recursive: true });
+    }
+  }
 
   // Shared index for work queue
   let nextIndex = 0;
-  const getNext = (): {
-    ep: EpisodeCandidate;
-    outPath: string;
-    outName: string;
-  } | null => {
-    while (nextIndex < episodes.length) {
-      const ep: EpisodeCandidate = episodes[nextIndex++]!;
-      const outName = `${padNumber(ep.episode, width)}.mp4`;
-      const outPath = resolvePath(path.join(opts.outputDir, outName));
-      if (!opts.force) {
-        try {
-          if (Bun.file(outPath)) {
-            // Bun.file(outPath).exists() is async; avoid await inside crit section
-          }
-        } catch { }
-      }
-      return { ep, outPath, outName };
-    }
-    return null;
+  const takeNext = (): ConversionJob | null => {
+    if (nextIndex >= jobs.length) return null;
+    const job = jobs[nextIndex];
+    nextIndex += 1;
+    return job;
   };
 
-  // Skip/existence check wrapper outside the crit section
-  async function nextJob(): Promise<{
-    ep: EpisodeCandidate;
-    outPath: string;
-    outName: string;
-  } | null> {
+  async function nextJob(): Promise<ConversionJob | null> {
     while (true) {
-      const job = getNext();
+      const job = takeNext();
       if (!job) return null;
       if (opts.dryRun) {
-        console.log(`[dry-run] ${job.ep.baseName} -> ${job.outName}`);
+        console.log(`[dry-run] ${job.inputRelativePath} -> ${job.outputRelativePath}`);
         continue;
       }
       if (!opts.force) {
         try {
-          if (await Bun.file(job.outPath).exists()) {
-            console.log(`Skipping existing ${job.outName}`);
+          if (await Bun.file(job.outputPath).exists()) {
+            console.log(`Skipping existing ${job.outputRelativePath}`);
             continue;
           }
         } catch { }
@@ -859,15 +978,15 @@ async function runConvert(
           const job = await nextJob();
           if (!job) break;
           try {
-            console.log(`QSV: ${job.ep.baseName} -> ${job.outName}`);
-            await convertOne(ffmpeg, "qsv", job.ep.inputPath, job.outPath, cfg);
+            console.log(`QSV: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
+            await convertOne(ffmpeg, "qsv", job.candidate.inputPath, job.outputPath, cfg);
           } catch (e) {
             console.warn(
-              `QSV failed, retry on CPU: ${job.ep.baseName} -> ${job.outName
+              `QSV failed, retry on CPU: ${job.inputRelativePath} -> ${job.outputRelativePath
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
-            await convertOne(ffmpeg, "cpu", job.ep.inputPath, job.outPath, cfg);
+            await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
           }
         }
       })()
@@ -884,15 +1003,15 @@ async function runConvert(
           const job = await nextJob();
           if (!job) break;
           try {
-            console.log(`NVENC: ${job.ep.baseName} -> ${job.outName}`);
-            await convertOne(ffmpeg, "nvenc", job.ep.inputPath, job.outPath, cfg);
+            console.log(`NVENC: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
+            await convertOne(ffmpeg, "nvenc", job.candidate.inputPath, job.outputPath, cfg);
           } catch (e) {
             console.warn(
-              `NVENC failed, retry on CPU: ${job.ep.baseName} -> ${job.outName
+              `NVENC failed, retry on CPU: ${job.inputRelativePath} -> ${job.outputRelativePath
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
-            await convertOne(ffmpeg, "cpu", job.ep.inputPath, job.outPath, cfg);
+            await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
           }
         }
       })()
@@ -909,15 +1028,15 @@ async function runConvert(
           const job = await nextJob();
           if (!job) break;
           try {
-            console.log(`AMF: ${job.ep.baseName} -> ${job.outName}`);
-            await convertOne(ffmpeg, "amf", job.ep.inputPath, job.outPath, cfg);
+            console.log(`AMF: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
+            await convertOne(ffmpeg, "amf", job.candidate.inputPath, job.outputPath, cfg);
           } catch (e) {
             console.warn(
-              `AMF failed, retry on CPU: ${job.ep.baseName} -> ${job.outName
+              `AMF failed, retry on CPU: ${job.inputRelativePath} -> ${job.outputRelativePath
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
-            await convertOne(ffmpeg, "cpu", job.ep.inputPath, job.outPath, cfg);
+            await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
           }
         }
       })()
@@ -932,8 +1051,8 @@ async function runConvert(
         while (true) {
           const job = await nextJob();
           if (!job) break;
-          console.log(`CPU: ${job.ep.baseName} -> ${job.outName}`);
-          await convertOne(ffmpeg, "cpu", job.ep.inputPath, job.outPath, cfg);
+          console.log(`CPU: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
+          await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
         }
       })()
     );
@@ -1113,7 +1232,7 @@ function printHelp(): void {
 
 Usage:
   bun run index.ts benchmark --input <file-or-dir> [--config <path>]
-  bun run index.ts convert --in <inputDir> --out <outputDir> [--force] [--dry-run] [--config <path>]
+  bun run index.ts convert --input <inputDir> --output <outputDir> [--force] [--dry-run] [--config <path>]
 
 Notes:
   - Output files are named NNN.mp4 (zero-padded) to sort correctly on TVs
@@ -1163,11 +1282,11 @@ async function main() {
       let configPath: string | undefined;
       for (let i = 1; i < argv.length; i++) {
         const a = argv[i];
-        if (a === "--in" && i + 1 < argv.length) {
+        if ((a === "--in" || a === "--input") && i + 1 < argv.length) {
           inputDir = argv[++i];
           continue;
         }
-        if (a === "--out" && i + 1 < argv.length) {
+        if ((a === "--out" || a === "--output") && i + 1 < argv.length) {
           outputDir = argv[++i];
           continue;
         }
@@ -1185,7 +1304,7 @@ async function main() {
         }
       }
       if (!inputDir || !outputDir) {
-        console.error("--in and --out are required");
+        console.error("--input and --output are required (aliases: --in, --out)");
         process.exit(2);
       }
       const cfgPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
