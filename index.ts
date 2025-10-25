@@ -211,7 +211,14 @@ async function supportsNvenc(ffmpegCmd: string): Promise<boolean> {
   // Prefer direct encoder help query; ffmpeg returns error if encoder doesn't exist
   try {
     const helpProc = Bun.spawn({
-      cmd: [ffmpegCmd, "-hide_banner", "-v", "error", "-h", "encoder=h264_nvenc"],
+      cmd: [
+        ffmpegCmd,
+        "-hide_banner",
+        "-v",
+        "error",
+        "-h",
+        "encoder=h264_nvenc",
+      ],
       stdout: "ignore",
       stderr: "pipe",
     });
@@ -345,7 +352,9 @@ async function benchmarkCpu(
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
   if (res.code !== 0) {
-    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+    throw new Error(
+      `ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`
+    );
   }
   const speed = parseSpeedFromFfmpegLog(res.stderr);
   if (speed != null) return speed;
@@ -372,7 +381,11 @@ async function benchmarkCpu(
   ];
   const res2 = await runFfmpegToNull(ffmpegCmd, args2);
   if (res2.code !== 0) {
-    throw new Error(`ffmpeg exited with code ${res2.code}: ${summarizeFfmpegError(res2.stderr)}`);
+    throw new Error(
+      `ffmpeg exited with code ${res2.code}: ${summarizeFfmpegError(
+        res2.stderr
+      )}`
+    );
   }
   return parseSpeedFromFfmpegLog(res2.stderr) ?? 1.0;
 }
@@ -412,7 +425,9 @@ async function benchmarkQsv(
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
   if (res.code !== 0) {
-    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+    throw new Error(
+      `ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`
+    );
   }
   const speed = parseSpeedFromFfmpegLog(res.stderr);
   if (speed == null) {
@@ -454,7 +469,9 @@ async function benchmarkNvenc(
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
   if (res.code !== 0) {
-    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+    throw new Error(
+      `ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`
+    );
   }
   const speed = parseSpeedFromFfmpegLog(res.stderr);
   if (speed == null) {
@@ -496,7 +513,9 @@ async function benchmarkAmf(
   ];
   const res = await runFfmpegToNull(ffmpegCmd, args);
   if (res.code !== 0) {
-    throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+    throw new Error(
+      `ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`
+    );
   }
   const speed = parseSpeedFromFfmpegLog(res.stderr);
   if (speed == null) {
@@ -550,7 +569,11 @@ async function determineCpuConcurrencyViaScaling(
     const results = await Promise.all(procs);
     for (const res of results) {
       if (res.code !== 0) {
-        throw new Error(`ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(res.stderr)}`);
+        throw new Error(
+          `ffmpeg exited with code ${res.code}: ${summarizeFfmpegError(
+            res.stderr
+          )}`
+        );
       }
     }
     const elapsedSec = (performance.now() - start) / 1000;
@@ -636,12 +659,12 @@ interface ConversionJob {
 
 function extractEpisodeNumberFromName(name: string): number | null {
   // Remove file extension first
-  const nameWithoutExt = name.replace(/\.[^.]+$/, '');
+  const nameWithoutExt = name.replace(/\.[^.]+$/, "");
 
   // Remove only YouTube IDs added by yt-dlp (11-character alphanumeric strings in brackets)
   // This handles patterns like: [-ayFQnecY-4], [dQw4w9WgXcQ], etc.
   // But preserves other bracketed content like [1080p], [h264], [Season 1], etc.
-  const cleaned = nameWithoutExt.replace(/\[([a-zA-Z0-9_-]{11})\]/g, '').trim();
+  const cleaned = nameWithoutExt.replace(/\[([a-zA-Z0-9_-]{11})\]/g, "").trim();
 
   const lower = cleaned.toLowerCase();
   // 1) SxxEyy pattern
@@ -689,7 +712,11 @@ async function listFilesRecursive(dir: string): Promise<string[]> {
       out.push(path.resolve(dir, entry));
     }
   } catch (error) {
-    throw new Error(`Cannot access directory "${dir}": ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Cannot access directory "${dir}": ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
   return out;
 }
@@ -707,9 +734,17 @@ async function collectFolderBatches(inputDir: string): Promise<FolderBatch[]> {
 
   const batches: FolderBatch[] = [];
 
-  const walk = async (currentDir: string, relativeDir: string): Promise<void> => {
+  const walk = async (
+    currentDir: string,
+    relativeDir: string
+  ): Promise<void> => {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+    entries.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
 
     const episodes: EpisodeCandidate[] = [];
 
@@ -728,7 +763,9 @@ async function collectFolderBatches(inputDir: string): Promise<FolderBatch[]> {
         continue;
       }
       if (entry.isDirectory()) {
-        const nextRelative = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+        const nextRelative = relativeDir
+          ? path.join(relativeDir, entry.name)
+          : entry.name;
         await walk(entryPath, nextRelative);
       }
     }
@@ -795,7 +832,7 @@ async function convertOne(
   outputPath: string,
   cfg: BenchmarkConfig
 ): Promise<void> {
-  const args: string[] = ["-hide_banner", "-y"];
+  const args: string[] = ["-hide_banner", "-y", "-fflags", "+genpts"];
 
   // Hardware acceleration input options must come before -i
   if (encoder === "qsv") {
@@ -807,7 +844,18 @@ async function convertOne(
 
   args.push("-i", inputPath);
   // Mapping and common options
-  args.push("-map", "0:v:0", "-map", "0:a:0?", "-movflags", "+faststart");
+  args.push(
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a:0?",
+    "-movflags",
+    "+faststart",
+    "-avoid_negative_ts",
+    "make_zero",
+    "-reset_timestamps",
+    "1"
+  );
 
   // Video encoding options based on encoder type
   if (encoder === "qsv") {
@@ -879,7 +927,7 @@ async function convertOne(
   if (code !== 0) {
     try {
       await fs.unlink(outputPath);
-    } catch { }
+    } catch {}
     throw new Error(`ffmpeg failed for ${inputPath}`);
   }
 }
@@ -951,7 +999,9 @@ async function runConvert(
       const job = takeNext();
       if (!job) return null;
       if (opts.dryRun) {
-        console.log(`[dry-run] ${job.inputRelativePath} -> ${job.outputRelativePath}`);
+        console.log(
+          `[dry-run] ${job.inputRelativePath} -> ${job.outputRelativePath}`
+        );
         continue;
       }
       if (!opts.force) {
@@ -960,7 +1010,7 @@ async function runConvert(
             console.log(`Skipping existing ${job.outputRelativePath}`);
             continue;
           }
-        } catch { }
+        } catch {}
       }
       return job;
     }
@@ -978,15 +1028,30 @@ async function runConvert(
           const job = await nextJob();
           if (!job) break;
           try {
-            console.log(`QSV: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
-            await convertOne(ffmpeg, "qsv", job.candidate.inputPath, job.outputPath, cfg);
+            console.log(
+              `QSV: ${job.inputRelativePath} -> ${job.outputRelativePath}`
+            );
+            await convertOne(
+              ffmpeg,
+              "qsv",
+              job.candidate.inputPath,
+              job.outputPath,
+              cfg
+            );
           } catch (e) {
             console.warn(
-              `QSV failed, retry on CPU: ${job.inputRelativePath} -> ${job.outputRelativePath
+              `QSV failed, retry on CPU: ${job.inputRelativePath} -> ${
+                job.outputRelativePath
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
-            await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
+            await convertOne(
+              ffmpeg,
+              "cpu",
+              job.candidate.inputPath,
+              job.outputPath,
+              cfg
+            );
           }
         }
       })()
@@ -1003,15 +1068,30 @@ async function runConvert(
           const job = await nextJob();
           if (!job) break;
           try {
-            console.log(`NVENC: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
-            await convertOne(ffmpeg, "nvenc", job.candidate.inputPath, job.outputPath, cfg);
+            console.log(
+              `NVENC: ${job.inputRelativePath} -> ${job.outputRelativePath}`
+            );
+            await convertOne(
+              ffmpeg,
+              "nvenc",
+              job.candidate.inputPath,
+              job.outputPath,
+              cfg
+            );
           } catch (e) {
             console.warn(
-              `NVENC failed, retry on CPU: ${job.inputRelativePath} -> ${job.outputRelativePath
+              `NVENC failed, retry on CPU: ${job.inputRelativePath} -> ${
+                job.outputRelativePath
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
-            await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
+            await convertOne(
+              ffmpeg,
+              "cpu",
+              job.candidate.inputPath,
+              job.outputPath,
+              cfg
+            );
           }
         }
       })()
@@ -1028,15 +1108,30 @@ async function runConvert(
           const job = await nextJob();
           if (!job) break;
           try {
-            console.log(`AMF: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
-            await convertOne(ffmpeg, "amf", job.candidate.inputPath, job.outputPath, cfg);
+            console.log(
+              `AMF: ${job.inputRelativePath} -> ${job.outputRelativePath}`
+            );
+            await convertOne(
+              ffmpeg,
+              "amf",
+              job.candidate.inputPath,
+              job.outputPath,
+              cfg
+            );
           } catch (e) {
             console.warn(
-              `AMF failed, retry on CPU: ${job.inputRelativePath} -> ${job.outputRelativePath
+              `AMF failed, retry on CPU: ${job.inputRelativePath} -> ${
+                job.outputRelativePath
               }: ${String(e)}`
             );
             // Fall back to CPU for this job
-            await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
+            await convertOne(
+              ffmpeg,
+              "cpu",
+              job.candidate.inputPath,
+              job.outputPath,
+              cfg
+            );
           }
         }
       })()
@@ -1051,8 +1146,16 @@ async function runConvert(
         while (true) {
           const job = await nextJob();
           if (!job) break;
-          console.log(`CPU: ${job.inputRelativePath} -> ${job.outputRelativePath}`);
-          await convertOne(ffmpeg, "cpu", job.candidate.inputPath, job.outputPath, cfg);
+          console.log(
+            `CPU: ${job.inputRelativePath} -> ${job.outputRelativePath}`
+          );
+          await convertOne(
+            ffmpeg,
+            "cpu",
+            job.candidate.inputPath,
+            job.outputPath,
+            cfg
+          );
         }
       })()
     );
@@ -1108,9 +1211,10 @@ async function runBenchmark(
   config.hasAmf = hasAmf;
 
   console.log(
-    `Benchmarking CPU (${config.cpuVideoEncoder} ${config.cpuVideoEncoder === "libx264"
-      ? `preset ${config.cpuPreset}, CRF ${config.cpuCrf}`
-      : `bitrate ${config.fallbackBitrate}`
+    `Benchmarking CPU (${config.cpuVideoEncoder} ${
+      config.cpuVideoEncoder === "libx264"
+        ? `preset ${config.cpuPreset}, CRF ${config.cpuCrf}`
+        : `bitrate ${config.fallbackBitrate}`
     })...`
   );
   // First, a single-stream speed estimate
@@ -1219,7 +1323,9 @@ async function runBenchmark(
   if (hwTypes.length > 0) {
     console.log(`Hardware acceleration enabled: ${hwTypes.join(", ")}`);
   } else {
-    console.log("No hardware acceleration available; CPU-only configuration will be used.");
+    console.log(
+      "No hardware acceleration available; CPU-only configuration will be used."
+    );
   }
 
   const outPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
@@ -1304,10 +1410,14 @@ async function main() {
         }
       }
       if (!inputDir || !outputDir) {
-        console.error("--input and --output are required (aliases: --in, --out)");
+        console.error(
+          "--input and --output are required (aliases: --in, --out)"
+        );
         process.exit(2);
       }
-      const cfgPath = configPath ? resolvePath(configPath) : getDefaultConfigPath();
+      const cfgPath = configPath
+        ? resolvePath(configPath)
+        : getDefaultConfigPath();
       let cfg = await readConfig(cfgPath);
 
       if (!cfg) {
@@ -1318,7 +1428,9 @@ async function main() {
         await runBenchmark(inputDir, configPath);
         // Now read the generated config
         cfg = (await readConfig(cfgPath)) ?? DEFAULT_CONFIG;
-        console.log(`Benchmark complete. Starting conversion with optimized settings.`);
+        console.log(
+          `Benchmark complete. Starting conversion with optimized settings.`
+        );
       }
       await runConvert(
         {
@@ -1331,7 +1443,11 @@ async function main() {
         cfg
       );
     } catch (error) {
-      console.error(`Convert command failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `Convert command failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       process.exit(1);
     }
     return;
