@@ -5,7 +5,7 @@ Bun + ffmpeg batch converter for TV-friendly MP4 (H.264 + AAC) with simple zero-
 ## Prerequisites
 
 - Bun installed
-- ffmpeg and ffprobe available on PATH
+- ffmpeg and ffprobe available on PATH (automatically downloaded if not found on Windows and Linux)
 
 ## Install
 

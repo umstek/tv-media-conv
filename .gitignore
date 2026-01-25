@@ -38,3 +38,6 @@ tv-media-conv.config.json
 tv-media-conv
 tv-media-conv.exe
 tv-media-conv-arm64
+
+# downloaded ffmpeg binaries
+.ffmpeg-bin

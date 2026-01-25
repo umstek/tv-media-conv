@@ -129,17 +129,126 @@ async function ensureFfmpegTools(): Promise<{
     which("ffmpeg"),
     which("ffprobe"),
   ]);
-  if (!ffmpeg) {
+  if (ffmpeg && ffprobe) {
+    return { ffmpeg, ffprobe };
+  }
+  
+  const platform = process.platform;
+  const arch = process.arch;
+  
+  const ffmpegDir = path.join(process.cwd(), ".ffmpeg-bin");
+  const ffmpegPath = path.join(ffmpegDir, platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+  const ffprobePath = path.join(ffmpegDir, platform === "win32" ? "ffprobe.exe" : "ffprobe");
+  
+  const checkExists = async (p: string): Promise<boolean> => {
+    try {
+      await fs.access(p);
+      const test = Bun.spawn({
+        cmd: [p, "-version"],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const code = await test.exited;
+      return code === 0;
+    } catch {
+      return false;
+    }
+  };
+  
+  if (await checkExists(ffmpegPath) && await checkExists(ffprobePath)) {
+    return { ffmpeg: ffmpegPath, ffprobe: ffprobePath };
+  }
+  
+  console.log("ffmpeg not found on PATH, downloading from BtbN/FFmpeg-Builds...");
+  
+  let downloadUrl: string;
+  let archiveExt: string;
+  
+  if (platform === "win32" && arch === "x64") {
+    downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip";
+    archiveExt = ".zip";
+  } else if (platform === "linux" && arch === "x64") {
+    downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linux64-gpl-shared-8.0.tar.xz";
+    archiveExt = ".tar.xz";
+  } else if (platform === "linux" && arch === "arm64") {
+    downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linuxarm64-gpl-shared-8.0.tar.xz";
+    archiveExt = ".tar.xz";
+  } else {
     throw new Error(
-      "ffmpeg not found on PATH. Please install ffmpeg and ensure it is available."
+      `ffmpeg not found on PATH and auto-download is not supported for ${platform}-${arch}. ` +
+      `Please install ffmpeg manually.`
     );
   }
-  if (!ffprobe) {
-    throw new Error(
-      "ffprobe not found on PATH. Please install ffmpeg (ffprobe) and ensure it is available."
-    );
+  
+  await fs.mkdir(ffmpegDir, { recursive: true });
+  const archivePath = path.join(ffmpegDir, `ffmpeg${archiveExt}`);
+  
+  console.log(`Downloading ffmpeg from ${downloadUrl}...`);
+  const response = await fetch(downloadUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download ffmpeg: ${response.statusText}`);
   }
-  return { ffmpeg, ffprobe };
+  const archiveBuffer = await response.arrayBuffer();
+  await Bun.write(archivePath, archiveBuffer);
+  
+  console.log("Extracting ffmpeg...");
+  const extractDir = path.join(ffmpegDir, "extract");
+  await fs.mkdir(extractDir, { recursive: true });
+  
+  if (archiveExt === ".zip") {
+    await Bun.spawn({
+      cmd: ["unzip", "-q", "-o", archivePath, "-d", extractDir],
+      stdout: "inherit",
+      stderr: "inherit",
+    }).exited;
+  } else if (archiveExt === ".tar.xz") {
+    await Bun.spawn({
+      cmd: ["tar", "-xJf", archivePath, "-C", extractDir],
+      stdout: "inherit",
+      stderr: "inherit",
+    }).exited;
+  }
+  
+  const findExecutable = async (name: string): Promise<string | null> => {
+    const exeName = platform === "win32" ? `${name}.exe` : name;
+    const walk = async (dir: string): Promise<string | null> => {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          const found = await walk(fullPath);
+          if (found) return found;
+        } else if (entry.isFile() && entry.name === exeName) {
+          return fullPath;
+        }
+      }
+      return null;
+    };
+    return walk(extractDir);
+  };
+  
+  const [foundFfmpeg, foundFfprobe] = await Promise.all([
+    findExecutable("ffmpeg"),
+    findExecutable("ffprobe"),
+  ]);
+  
+  if (!foundFfmpeg || !foundFfprobe) {
+    throw new Error("Failed to find ffmpeg or ffprobe in downloaded archive");
+  }
+  
+  await Bun.write(ffmpegPath, await Bun.file(foundFfmpeg).arrayBuffer());
+  await Bun.write(ffprobePath, await Bun.file(foundFfprobe).arrayBuffer());
+  
+  if (platform !== "win32") {
+    await fs.chmod(ffmpegPath, 0o755);
+    await fs.chmod(ffprobePath, 0o755);
+  }
+  
+  await fs.rm(extractDir, { recursive: true, force: true });
+  await fs.unlink(archivePath).catch(() => {});
+  
+  console.log(`ffmpeg downloaded and installed to ${ffmpegDir}`);
+  return { ffmpeg: ffmpegPath, ffprobe: ffprobePath };
 }
 
 async function getEncoders(ffmpegCmd: string): Promise<Set<string>> {
