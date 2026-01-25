@@ -58,3 +58,23 @@ Notes:
 - Hardware acceleration significantly improves encoding speed (3-10x faster than CPU-only)
 - Multiple hardware acceleration types can be active simultaneously if available
 - Episode numbers are extracted heuristically from filenames (e.g. `S01E03`, `Ep 3`, `03 - title`, etc.).
+
+## Build Standalone Executable
+
+To create a standalone Windows executable:
+
+```bash
+bun run build
+```
+
+This creates `tv-media-conv.exe` which includes the entire Bun runtime. The executable can be distributed without requiring Bun to be installed (ffmpeg and ffprobe are still required on the target machine).
+
+### CI/CD Builds
+
+GitHub Actions automatically builds binaries for all platforms when a release is created:
+
+- **Windows**: `tv-media-conv.exe` (x64)
+- **macOS**: `tv-media-conv` (Intel), `tv-media-conv-arm64` (Apple Silicon)
+- **Linux**: `tv-media-conv` (x64), `tv-media-conv-arm64` (ARM64)
+
+To trigger a build with all binaries, create a GitHub release. The binaries are automatically attached to the release as downloadable assets.

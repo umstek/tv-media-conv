@@ -8,5 +8,8 @@
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
+  },
+  "scripts": {
+    "build": "bun build --compile index.ts --outfile tv-media-conv.exe"
   }
 }
