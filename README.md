@@ -5,7 +5,9 @@ Bun + ffmpeg batch converter for TV-friendly MP4 (H.264 + AAC) with simple zero-
 ## Prerequisites
 
 - Bun installed
-- ffmpeg and ffprobe available on PATH (automatically downloaded if not found on Windows and Linux)
+- ffmpeg and ffprobe available on PATH (automatically downloaded if not found on Windows x64 or Linux x64/ARM64)
+- Linux auto-download requires `tar` and `xz` for extraction
+- macOS requires ffmpeg to be installed manually
 
 ## Install
 
@@ -67,7 +69,7 @@ To create a standalone Windows executable:
 bun run build
 ```
 
-This creates `tv-media-conv.exe` which includes the entire Bun runtime. The executable can be distributed without requiring Bun to be installed (ffmpeg and ffprobe are still required on the target machine).
+This creates `tv-media-conv.exe` which includes the entire Bun runtime. The executable can be distributed without requiring Bun to be installed. ffmpeg and ffprobe are downloaded automatically on Windows x64 and Linux x64/ARM64 if not found on PATH; macOS requires a manual install.
 
 ### CI/CD Builds
 

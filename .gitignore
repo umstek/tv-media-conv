@@ -39,5 +39,9 @@ tv-media-conv
 tv-media-conv.exe
 tv-media-conv-arm64
 
-# downloaded ffmpeg binaries
+# downloaded ffmpeg binaries (legacy local cache)
 .ffmpeg-bin
+# downloaded ffmpeg binaries (user cache locations)
+.cache/tv-media-conv/ffmpeg/
+Library/Caches/tv-media-conv/ffmpeg/
+AppData/Local/tv-media-conv/ffmpeg/
