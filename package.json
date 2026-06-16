@@ -7,7 +7,7 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2 || ^6.0.0"
   },
   "scripts": {
     "build": "bun build --compile index.ts --outfile tv-media-conv",
