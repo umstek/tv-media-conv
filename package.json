@@ -8,5 +8,9 @@
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
+  },
+  "scripts": {
+    "build": "bun build --compile index.ts --outfile tv-media-conv",
+    "build:windows": "bun build --compile --target=bun-windows-x64 index.ts --outfile tv-media-conv.exe"
   }
 }
