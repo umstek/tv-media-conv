@@ -8,6 +8,9 @@
     "jsx": "react-jsx",
     "allowJs": true,
 
+    // TS 6.0 no longer auto-discovers @types/* packages; opt in explicitly.
+    "types": ["bun"],
+
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
