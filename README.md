@@ -73,7 +73,7 @@ This creates `tv-media-conv.exe` which includes the entire Bun runtime. The exec
 
 ### CI/CD Builds
 
-GitHub Actions automatically builds binaries for all platforms when a release is created:
+GitHub Actions automatically builds binaries for all platforms when a release is published:
 
 - **Windows**: `tv-media-conv-windows-x64.exe` (x64)
 - **macOS**: `tv-media-conv-darwin-x64` (Intel), `tv-media-conv-darwin-arm64` (Apple Silicon)
