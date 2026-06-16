@@ -14,19 +14,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: bun-linux-x64
-            output: tv-media-conv
+            output: tv-media-conv-linux-x64
           - os: ubuntu-latest
             target: bun-linux-arm64
-            output: tv-media-conv-arm64
+            output: tv-media-conv-linux-arm64
           - os: windows-latest
             target: bun-windows-x64
-            output: tv-media-conv.exe
+            output: tv-media-conv-windows-x64.exe
           - os: macos-latest
             target: bun-darwin-x64
-            output: tv-media-conv
+            output: tv-media-conv-darwin-x64
           - os: macos-14
             target: bun-darwin-arm64
-            output: tv-media-conv-arm64
+            output: tv-media-conv-darwin-arm64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -34,7 +34,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.2.x"
 
       - name: Install dependencies
         run: bun install
