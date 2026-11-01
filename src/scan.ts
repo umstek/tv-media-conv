@@ -32,14 +32,21 @@ export interface EpisodeCandidate {
   relativeDir: string;
 }
 
+export interface LooseCandidate {
+  inputPath: string;
+  baseName: string;
+  relativeDir: string;
+}
+
 export interface FolderBatch {
   relativeDir: string;
   episodes: EpisodeCandidate[];
+  loose: LooseCandidate[];
   width: number;
 }
 
 export interface ConversionJob {
-  candidate: EpisodeCandidate;
+  inputPath: string;
   outputPath: string;
   outputRelativePath: string;
   inputRelativePath: string;
@@ -141,13 +148,21 @@ async function collectFolderBatches(inputDir: string): Promise<FolderBatch[]> {
     );
 
     const episodes: EpisodeCandidate[] = [];
+    const loose: LooseCandidate[] = [];
 
     for (const entry of entries) {
       const entryPath = path.join(currentDir, entry.name);
       if (entry.isFile()) {
         if (!isVideoFile(entry.name)) continue;
         const episode = extractEpisodeNumberFromName(entry.name);
-        if (episode == null) continue;
+        if (episode == null) {
+          loose.push({
+            inputPath: entryPath,
+            baseName: entry.name,
+            relativeDir,
+          });
+          continue;
+        }
         episodes.push({
           inputPath: entryPath,
           baseName: entry.name,
@@ -164,12 +179,14 @@ async function collectFolderBatches(inputDir: string): Promise<FolderBatch[]> {
       }
     }
 
-    if (episodes.length > 0) {
+    if (episodes.length > 0 || loose.length > 0) {
       episodes.sort((a, b) => a.episode - b.episode);
-      const maxEpisode = episodes[episodes.length - 1]!.episode;
+      const maxEpisode =
+        episodes.length > 0 ? episodes[episodes.length - 1]!.episode : 0;
       batches.push({
         relativeDir,
         episodes,
+        loose,
         width: chooseWidth(maxEpisode),
       });
     }
@@ -185,6 +202,7 @@ export async function buildConversionJobs(
 ): Promise<ConversionJob[]> {
   const batches = await collectFolderBatches(inputDir);
   const jobs: ConversionJob[] = [];
+  const usedOutputPaths = new Set<string>();
 
   for (const batch of batches) {
     const targetDir = batch.relativeDir
@@ -194,6 +212,7 @@ export async function buildConversionJobs(
     for (const candidate of batch.episodes) {
       const outputFileName = `${padNumber(candidate.episode, batch.width)}.mp4`;
       const outputPath = path.join(targetDir, outputFileName);
+      usedOutputPaths.add(outputPath);
       const inputRelativePath = batch.relativeDir
         ? path.join(batch.relativeDir, candidate.baseName)
         : candidate.baseName;
@@ -202,7 +221,30 @@ export async function buildConversionJobs(
         : outputFileName;
 
       jobs.push({
-        candidate,
+        inputPath: candidate.inputPath,
+        outputPath,
+        outputRelativePath,
+        inputRelativePath,
+        outputFileName,
+      });
+    }
+
+    for (const candidate of batch.loose) {
+      const stem = candidate.baseName.replace(/\.[^.]+$/, "");
+      const outputFileName = `${stem}.mp4`;
+      const outputPath = path.join(targetDir, outputFileName);
+      if (usedOutputPaths.has(outputPath)) continue;
+      usedOutputPaths.add(outputPath);
+
+      const inputRelativePath = batch.relativeDir
+        ? path.join(batch.relativeDir, candidate.baseName)
+        : candidate.baseName;
+      const outputRelativePath = batch.relativeDir
+        ? path.join(batch.relativeDir, outputFileName)
+        : outputFileName;
+
+      jobs.push({
+        inputPath: candidate.inputPath,
         outputPath,
         outputRelativePath,
         inputRelativePath,

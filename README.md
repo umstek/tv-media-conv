@@ -34,6 +34,7 @@ bun run index.ts benchmark --input <file-or-dir> --config ./my.config.json
 ### 2) Convert a folder
 
 Converts all videos under the input folder to MP4 (H.264 + AAC), output filenames `NNN.mp4` for proper TV sorting.
+Videos without a detectable episode number keep their original name with an `.mp4` extension.
 
 ```bash
 bun run index.ts convert --in "D:/Videos/My Show" --out "D:/Videos/My Show/TV"
