@@ -160,7 +160,7 @@ async function runConvert(
   const jobs = await buildConversionJobs(opts.inputDir, opts.outputDir);
 
   if (jobs.length === 0) {
-    throw new Error("No episode-like video files found in input directory.");
+    throw new Error("No convertible video files found in input directory.");
   }
 
   if (!opts.dryRun) {
@@ -223,7 +223,7 @@ async function runConvert(
             await convertOne(
               ffmpeg,
               "qsv",
-              job.candidate.inputPath,
+              job.inputPath,
               job.outputPath,
               cfg
             );
@@ -237,7 +237,7 @@ async function runConvert(
             await convertOne(
               ffmpeg,
               "cpu",
-              job.candidate.inputPath,
+              job.inputPath,
               job.outputPath,
               cfg
             );
@@ -263,7 +263,7 @@ async function runConvert(
             await convertOne(
               ffmpeg,
               "nvenc",
-              job.candidate.inputPath,
+              job.inputPath,
               job.outputPath,
               cfg
             );
@@ -277,7 +277,7 @@ async function runConvert(
             await convertOne(
               ffmpeg,
               "cpu",
-              job.candidate.inputPath,
+              job.inputPath,
               job.outputPath,
               cfg
             );
@@ -303,7 +303,7 @@ async function runConvert(
             await convertOne(
               ffmpeg,
               "amf",
-              job.candidate.inputPath,
+              job.inputPath,
               job.outputPath,
               cfg
             );
@@ -317,7 +317,7 @@ async function runConvert(
             await convertOne(
               ffmpeg,
               "cpu",
-              job.candidate.inputPath,
+              job.inputPath,
               job.outputPath,
               cfg
             );
@@ -341,7 +341,7 @@ async function runConvert(
           await convertOne(
             ffmpeg,
             "cpu",
-            job.candidate.inputPath,
+            job.inputPath,
             job.outputPath,
             cfg
           );
@@ -531,6 +531,7 @@ Usage:
 
 Notes:
   - Output files are named NNN.mp4 (zero-padded) to sort correctly on TVs
+  - Videos without an episode number keep their name (extension becomes .mp4)
   - Benchmarks choose CPU concurrency and enable hardware acceleration if available
   - Hardware acceleration support:
     • Intel QSV (Quick Sync Video) - h264_qsv encoder
