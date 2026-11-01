@@ -2,7 +2,7 @@
 
 ## Core Facts
 
-- **Runtime**: Bun + TypeScript single entry (`index.ts`). No build step; execute with `bun index.ts <cmd>`.
+- **Runtime**: Bun + TypeScript. Entry point `index.ts` (CLI parsing and orchestration) with modules in `src/` (`config.ts`, `ffmpeg-bootstrap.ts`, `encoders.ts`, `scan.ts`). No build step for running: `bun index.ts <cmd>`; `bun run build` compiles a standalone binary.
 - **Primary commands**:
   - `benchmark --input <file/dir> [--config <path>]`
   - `convert --input <dir> --output <dir> [--force] [--dry-run] [--config <path>]`
